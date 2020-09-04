@@ -1,5 +1,6 @@
 import argparse
 import re
+import os
 
 JUMP_TABLE = {
     '':    '000',
@@ -54,18 +55,27 @@ COMP_TABLE = {
     'D|M': '1010101'
 }
 
+def writeFile(data, filename):
+    f = open('{name}.hack'.format(name=filename.split('.')[0]), 'x')
+    f.write(data)
+    f.close()
+
+
 def parseA(line):
     m = re.match(r'^\s*@(\d+)', line)
     if m:
-        return '0{:0=15b}'.format(int(m.group(1)))
+        return '0{:0=15b}\n'.format(int(m.group(1)))
     else:
         return 'no match for A'
 
 def parseC(line):
     m = re.split(r'^\s*([MDA+\-=01&!|]*);?([JGELTMPNQ]{0,3})', line, maxsplit=3)
-    dest, comp = m[1].split('=')
-    jump = m[-2]
-    return '111{comp}{dest}{jump}'.format(comp=COMP_TABLE[comp], dest=DEST_TABLE[dest], jump=JUMP_TABLE[jump])
+    if m:
+        dest, comp = m[1].split('=')
+        jump = m[-2]
+        return '111{comp}{dest}{jump}\n'.format(comp=COMP_TABLE[comp], dest=DEST_TABLE[dest], jump=JUMP_TABLE[jump])
+    else:
+        return 'no match for C'
 
 
 def parseLine(line):
@@ -74,12 +84,13 @@ def parseLine(line):
     elif line[0] in ['M', 'D', 'A'] or line[0].isnumeric():
         return parseC(line)
     else:
-         return 'not a command'
+         return ''
 
 def parse(file):
-    print('Source file parsing will be there')
+    parsed_data = ''
     for line in file:
-        print(parseLine(line))
+        parsed_data += parseLine(line)
+    writeFile(parsed_data, os.path.split(file.name)[1])
 
 def main ():
     argparser = argparse.ArgumentParser(description='Produce binary program from HACK assembly program')
