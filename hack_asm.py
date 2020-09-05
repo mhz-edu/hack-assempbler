@@ -83,13 +83,13 @@ COMP_TABLE = {
 }
 
 def writeFile(data, filename):
-    f = open('{name}.hack'.format(name=filename.split('.')[0]), 'x')
+    f = open('{name}.hack'.format(name=filename.split('.')[0]), 'w')
     f.write(data)
     f.close()
 
 
 def parseA(line):
-    m = re.match(r'^\s*@([^\s|//.*]+)', line)
+    m = re.match(r'^\s*@([^\s|//*]+)', line)
     if m:
         if m.group(1).isnumeric():
             return '0{:0=15b}\n'.format(int(m.group(1)))
