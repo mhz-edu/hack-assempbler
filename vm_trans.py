@@ -6,7 +6,7 @@ import os
 
 TR_TABLE = {
     "add" : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=D+M\nM=D\nD=A+1\n@SP\nM=D\n",
-    "sub" : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=D-M\nM=D\nD=A+1\n@SP\nM=D\n",
+    "sub" : "@SP\nM=M-1\nA=M\nD=M\nA=A-1\nD=M-D\nM=D\nD=A+1\n@SP\nM=D\n",
     "neg" : "@SP\nA=M\nA=A-1\nM=-M\n",
     "eq"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JEQ\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=1\n(END.{num})\n@SP\nM=M-1\n",
     "gt"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JGT\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=1\n(END.{num})\n@SP\nM=M-1\n",
@@ -21,7 +21,6 @@ SEG_PTRS = {
     "argument": "ARG",
     "this": "THIS",
     "that": "THAT",
-    "temp": 5,
     "LABEL_COUNT": 0
 }
 
@@ -41,14 +40,18 @@ def pushPop(args):
         res = '@{segment}\nD=M\n@{value}\nD=D+A\nA=D\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n'.format(segment=SEG_PTRS[args[1]], value=args[2])
     elif  args[0] == 'pop' and args[1] in SEG_PTRS:
         res = '@{segment}\nD=M\n@{value}\nD=D+A\n@SP\nA=M\nM=D\nA=A-1\nD=M\nA=A+1\nA=M\nM=D\n@SP\nM=M-1\n'.format(segment=SEG_PTRS[args[1]], value=args[2])
+    elif args[0] == 'push' and args[1] == 'temp':
+        res = '@5\nD=A\n@{value}\nD=D+A\nA=D\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n'.format(value=args[2])
+    elif  args[0] == 'pop' and args[1] == 'temp':
+        res = '@5\nD=A\n@{value}\nD=D+A\n@SP\nA=M\nM=D\nA=A-1\nD=M\nA=A+1\nA=M\nM=D\n@SP\nM=M-1\n'.format(value=args[2])
     elif args[0] == 'push' and args[1] == 'static':
         res = '@{varname}.{value}\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n'.format(varname=FILENAME, value=args[2])
     elif args[0] == 'pop' and args[1] == 'static':
         res = '@SP\nM=M-1\nA=M\nD=M\n@{varname}.{value}\nM=D\n'.format(varname=FILENAME, value=args[2])
     elif args[0] == 'push' and args[1] == 'pointer':
-        res = '@{ptr}\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n'.format(ptr='THIS' if args[2]==0 else 'THAT')
+        res = '@{ptr}\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n'.format(ptr='THIS' if args[2]=='0' else 'THAT')
     elif args[0] == 'pop' and args[1] == 'pointer':
-        res = '@SP\nM=M-1\nA=M\nD=M\n@{ptr}\nM=D\n'.format(ptr='THIS' if args[2]==0 else 'THAT')
+        res = '@SP\nM=M-1\nA=M\nD=M\n@{ptr}\nM=D\n'.format(ptr='THIS' if args[2]=='0' else 'THAT')
     else:
         res = 'cannot parse the command'
     res = '//{command}\n'.format(command=' '.join(args)) + res
