@@ -8,9 +8,9 @@ TR_TABLE = {
     "add" : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=D+M\nM=D\nD=A+1\n@SP\nM=D\n",
     "sub" : "@SP\nM=M-1\nA=M\nD=M\nA=A-1\nD=M-D\nM=D\nD=A+1\n@SP\nM=D\n",
     "neg" : "@SP\nA=M\nA=A-1\nM=-M\n",
-    "eq"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JEQ\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=1\n(END.{num})\n@SP\nM=M-1\n",
-    "gt"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JGT\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=1\n(END.{num})\n@SP\nM=M-1\n",
-    "lt"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JLT\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=1\n(END.{num})\n@SP\nM=M-1\n",
+    "eq"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JEQ\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=-1\n(END.{num})\n@SP\nM=M-1\n",
+    "gt"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JGT\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=-1\n(END.{num})\n@SP\nM=M-1\n",
+    "lt"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=M-D\n@TRUE.{num}\nD;JLT\n@SP\nA=M\nA=A-1\nA=A-1\nM=0\n@END.{num}\n0;JMP\n(TRUE.{num})\n@SP\nA=M\nA=A-1\nA=A-1\nM=-1\n(END.{num})\n@SP\nM=M-1\n",
     "and" : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=D&M\nM=D\nD=A+1\n@SP\nM=D\n",
     "or"  : "@SP\nA=M\nA=A-1\nD=M\nA=A-1\nD=D|M\nM=D\nD=A+1\n@SP\nM=D\n",
     "not" : "@SP\nA=M\nA=A-1\nM=!M\n"
