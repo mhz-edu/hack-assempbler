@@ -1,6 +1,7 @@
 import argparse
 import re
 import os
+from pathlib import Path
 
 BOOT = {
     "code": "@256\nD=A\n@SP\nM=D\n"
@@ -27,15 +28,15 @@ SEG_PTRS = {
 }
 
 FLOW_TABLE = {
-    "label": "({filename}.{funcName}${label})\n",
-    "goto": "@{filename}.{funcName}${label}\n0;JMP\n",
-    "if-goto": "@SP\nM=M-1\nA=M\nD=M\n@{filename}.{funcName}${label}\nD;JNE\n"
+    "label": "({funcName}${label})\n",
+    "goto": "@{funcName}${label}\n0;JMP\n",
+    "if-goto": "@SP\nM=M-1\nA=M\nD=M\n@{funcName}${label}\nD;JNE\n"
 }
 
 FUNC_TABLE = {
-    "function": "({filename}.{caller})\n{push0n}",
+    "function": "({caller})\n{push0n}",
     "call":  '''//push retAddrLabel
-                @{filename}.{caller}$ret.{i}\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1
+                @{caller}$ret.{i}\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1
                 //push LCL
                 @LCL\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1
                 //push ARG
@@ -48,14 +49,14 @@ FUNC_TABLE = {
                 @SP\nD=M\n@5\nD=D-A\n@{nVars}\nD=D-A\n@ARG\nM=D
                 //reposition LCL
                 @SP\nD=M\n@LCL\nM=D
-                //goto {filename}.{calee}
-                @{filename}.{calee}\n0;JMP\n
-                ({filename}.{caller}$ret.{i})\n''',
+                //goto {calee}
+                @{calee}\n0;JMP\n
+                ({caller}$ret.{i})\n''',
     "return":    '''//endframe
                     @LCL\nD=M\n@endframe\nM=D
                     //get retAddr
                     @endframe
-                    D=M\n@5\nD=D-A\nA=D\nD=M\n@{filename}.{caller}$ret.{i}\nM=D
+                    D=M\n@5\nD=D-A\nA=D\nD=M\n@{caller}$ret.{i}\nM=D
                     //reposition return val for the caller
                     @SP\nM=M-1\nA=M\nD=M\n@ARG\nA=M\nM=D
                     //reposition SP for the caller
@@ -69,18 +70,19 @@ FUNC_TABLE = {
                     //restore LCL
                     @endframe\nM=M-1\nA=M\nD=M\n@LCL\nM=D
                     //goto retAddr
-                    @{filename}.{caller}$ret.{i}\nA=M\n0;JMP\n''',
+                    @{caller}$ret.{i}\nA=M\n0;JMP\n''',
     "caller": "",
     "calee": "",
     "calee_count": 0
 }
 
 FILE = {
-    "name": ''
+    "dir": "",
+    "name": ""
 }
 
 def writeFile(data, filename):
-    f = open('{name}.asm'.format(name=filename.split('.')[0]), 'w')
+    f = open('{name}.asm'.format(name=filename), 'w')
     f.write(data)
     f.close()
 
@@ -168,22 +170,48 @@ def parseLine(line):
         #print('command found')
         return parseCommand(line)
 
-def parse(file):
-    FILE['name'] = os.path.split(file.name)[1].split('.')[0]
+def parse(path):
+    p = Path(path)
+    FILE['name'] = p.stem
+    print('Opening single file %s' % FILE['name'])
     parsed_data = ''
     # Add bootstrap code
+    FUNC_TABLE['caller'] = 'Bootstrap'
     parsed_data += BOOT['code']
     parsed_data += parseCommand('call Sys.init 0')
-    for line in file:
+    for line in p.open():
         parsed_data += parseLine(line)
     #print(parsed_data)
-    writeFile(parsed_data, os.path.split(file.name)[1])
+    writeFile(parsed_data, FILE['name'])
+
+def parsedir(path):
+    p = Path(path)
+    FILE['dir'] = p.name
+    parsed_data = ''
+    # Add bootstrap code
+    FILE['name'] = 'Sys'
+    FUNC_TABLE['caller'] = 'Bootstrap'
+    parsed_data += BOOT['code']
+    parsed_data += parseCommand('call Sys.init 0')
+    for f in p.glob('*.vm'):
+        FILE['name'] = f.stem
+        print('Opening dir file %s' % FILE['name'])
+        for line in f.open():
+            parsed_data += parseLine(line)
+    writeFile(parsed_data, FILE['dir'])        
+        
 
 def main ():
     argparser = argparse.ArgumentParser(description='Produce HACK assembly program from VM code')
-    argparser.add_argument('infile', type=argparse.FileType('r', encoding='UTF-8'))
+    argparser.add_argument('input')
     args = argparser.parse_args()
-    parse(args.infile)
+    if os.path.isfile(args.input):
+        parse(args.input)
+    elif os.path.isdir(args.input):
+        parsedir(args.input)
+    else:
+        print('Path error')
+        return None
 
 if __name__ == "__main__":
     main()
