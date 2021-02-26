@@ -198,7 +198,7 @@ def parsedir(path):
         print('Opening dir file %s' % FILE['name'])
         for line in f.open():
             parsed_data += parseLine(line)
-    writeFile(parsed_data, FILE['dir'])        
+    writeFile(parsed_data, FILE['dir'])
         
 
 def main ():
