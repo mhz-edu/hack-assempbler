@@ -51,7 +51,7 @@ SYMBOLS = ['{',
            '=',
            '~']
 
-TOKEN_SEPARATOR = SYMBOLS + [' ']
+TOKEN_SEPARATOR = SYMBOLS + [' ', '\r']
 
 PATTERNS = (
     ('|'.join(KEYWORDS), 'keyword',0),
@@ -168,109 +168,124 @@ def matchApplyBuilder(pattern, token_type, match_group):
 
 
 def compile(tokenizer):
-    def compileToken(expected_type=None, expected_text=None, token=None, allow_to_fail=False):
-        if token == None:
-            if tokenizer.getStatus():
-                token_type, token_text = next(tokenizer)
-                print('Retrieved next token: ', token_type, token_text)
-            else:
-                token_type, token_text = tokenizer.getCurrentToken()
-                print('Using existing token: ', token_type, token_text)
+
+    def createXmlElement(token):
+        token_type, token_text = token
+        elem = ET.Element(token_type)
+        elem.text = token_text
+        return elem
+        
+
+    def compileToken(expected_type, expected_text=None, allow_to_fail=False, tokenizer=tokenizer):
+        if tokenizer.getStatus():
+            token_type, token_text = next(tokenizer)
+            print('Retrieved next token: ', token_type, token_text)
         else:
-            token_type, token_text = token
-            print('Using passed token: ', token_type, token_text)
-        if (expected_type == None):
-            elem = ET.Element(token_type)
-            elem.text = token_text
-            tokenizer.setProcessed()
-            return elem
-        elif (token_type == expected_type):
-            if (expected_text == None):
-                elem = ET.Element(token_type)
-                elem.text = token_text
-                tokenizer.setProcessed()
-                return elem
-            elif (expected_text == token_text):
-                elem = ET.Element(token_type)
-                elem.text = token_text
-                tokenizer.setProcessed()
-                return elem
-            elif (token_text in expected_text):
-                elem = ET.Element(token_type)
-                elem.text = token_text
+            token_type, token_text = tokenizer.getCurrentToken()
+            print('Using existing token: ', token_type, token_text)
+        if (expected_text == None):
+            if (expected_type == token_type):
+                elem = createXmlElement((token_type, token_text))
                 tokenizer.setProcessed()
                 return elem
             else:
                 if allow_to_fail:
-                    return ET.Element('')
+                    return None
                 else:
-                    raise ValueError('expected text ', expected_text,  ' got ', token_text)
-        elif (token_type in expected_type):
-            elem = ET.Element(token_type)
-            elem.text = token_text
-            tokenizer.setProcessed()
-            return elem
+                    raise ValueError('Expeting type "{}", got type "{}"'.format(expected_type, token_type))    
         else:
-            if allow_to_fail:
-                return ET.Element('')
+            if (expected_text == token_text) and (expected_type == token_type):
+                elem = createXmlElement((token_type, token_text))
+                tokenizer.setProcessed()
+                return elem
             else:
-                raise ValueError('expected type ', expected_type, ' got ', token_type )
+                if allow_to_fail:
+                    return None
+                else:
+                    raise ValueError('Expeting {}, got {}'.format(expected_text, token_text))
 
-    def compileTokenList(stop, delim, tokens, include_stop=True):
+
+    def compileOrAlt(fns):
+        for fn, arg in fns:
+            elem = fn(*arg, allow_to_fail=True)
+            if elem != None:
+                return elem
+        raise ValueError('Unexpected token')
+
+    def compileGroup(fns):
         result = []
-        stop_type, stop_text = stop
-        delim_type, delim_text = delim
-        for func in tokens:
-            elem = func()
-            result.append(elem)
-        elem = compileToken(expected_type=stop_type, expected_text=stop_text, allow_to_fail=True)
-        if elem.tag == '':
-            while ((elem.tag != stop_type) or (elem.text != stop_text)) :
-                elem = compileToken(expected_type=delim_type, expected_text=delim_text)
+        for fn, arg in fns:
+            elem = fn(*arg)
+            try:
+                elem.tag
                 result.append(elem)
-                for func in tokens:
-                    elem = func()
-                    result.append(elem)
-                elem = compileToken(expected_type=stop_type, expected_text=stop_text, allow_to_fail=True)
-            print('stop element found')
-            if include_stop:
-                print('stop elemt included')
-                result.append(elem)
-            return result
-        else:
-            if include_stop:
-                print('stop elemt included')
-                result.append(elem)
-            return result
+            except AttributeError:
+                result.extend(elem)
+        return result
 
-    def compileTokenListSeq(tokens):
+    def compileZeroOrOne(fn):
+        try:
+            elem = fn()
+            return elem
+        except ValueError:
+            return None
+
+    def compileZeroOrMore(fn):
         result = []
         while True:
             try:
-                temp_result = []
-                for func in tokens:
-                    elem = func()
-                    try:
-                        temp_result.extend(elem)
-                        print('processed as list')
-                    except TypeError:
-                        temp_result.append(elem)
-                        print('processed as single')
-                    temp_result += elem
-                result += temp_result
+                elem = fn()
+                try:
+                    result.extend(elem)
+                except TypeError:
+                    result.append(elem)
             except ValueError:
-                print('value error is raised')
-                return result
+                break
         return result
+
+    def compileKwd():
+        return compileGroup([
+            (compileOrAlt, [[
+                [compileToken, ['keyword', 'field']],
+                [compileToken, ['keyword', 'static']]
+            ]]),
+            (compileToken, ['keyword', 'int']),
+            (compileToken, ['identifier', None]),
+        ])
+
+    def compileGrp1():
+        return compileGroup([
+            (compileType, []),
+            (compileToken, ['identifier', None])
+        ])
+    def compileGrp2():
+        return compileGroup([
+            (compileToken, ['symbol', ',']),
+            (compileType, []),
+            (compileToken, ['identifier', None])
+        ])
+    def compileGrp3():
+        return compileGroup([
+            (compileGrp1, []),
+            (compileZeroOrMore, [compileGrp2])
+        ])
+
+    def compileGrp4():
+        return compileZeroOrOne(compileGrp3)
 
     def compileClass():
         root = ET.Element('class')
-        child_list = [compileToken(expected_type='keyword', expected_text='class'),
-                    compileToken(expected_type='identifier'),
-                    compileToken(expected_type='symbol', expected_text='{'),
-                    compileClassVarDec(),
-                    compileSubroutineDecAlt(),
-                    compileToken(expected_type='symbol', expected_text='}')]
+        child_list = []
+        child_list.append(compileToken(expected_type='keyword', expected_text='class'))
+        child_list.append(compileToken(expected_type='identifier'))
+        child_list.append(compileToken(expected_type='symbol', expected_text='{'))
+        elem = compileClassVarDec()
+        if elem != []:
+            child_list.append(elem)
+        elem = compileSubroutineDec()
+        if elem != []:
+            child_list.append(elem)
+        child_list.append(compileToken(expected_type='symbol', expected_text='}'))
         for child in child_list:
             if child != None:
                 root.append(child)
@@ -279,102 +294,168 @@ def compile(tokenizer):
 
     def compileClassVarDec():
         def compileClassVarKwd():
-            return compileToken(expected_type='keyword', expected_text=['static', 'field'])
+            return compileOrAlt([
+                (compileToken, ['keyword','static']),
+                (compileToken, ['keyword','field'])
+            ])
 
-        def compileVars():
-            return compileTokenList(('symbol',';'), ('symbol',','), [compileVarName])
-        
-        child_list = compileTokenListSeq([compileClassVarKwd,
-                                          compileType,
-                                          compileVars])
+        def compileVarNameGr():
+            def formGroup1():
+                return compileGroup([
+                    (compileToken, ['symbol', ',']),
+                    (compileToken, ['identifier', None])
+                ])
+            return compileZeroOrMore(formGroup1)
+
+        def formClassVarGr():
+            def formGroup2():
+                return compileGroup([
+                    (compileClassVarKwd, []),
+                    (compileType, []),
+                    (compileToken, ['identifier', None]),
+                    (compileVarNameGr, []),
+                    (compileToken, ['symbol', ';'])
+                ])
+            return compileZeroOrMore(formGroup2)
+
+        child_list = formClassVarGr()
         if child_list != []:
             root = ET.Element('classVarDec')
             for child in child_list:
                 root.append(child)
             return root
         else:
-            return None
+            return []
 
     def compileVarName():
         return compileToken('identifier', None)
 
-    
 
-    def compileType(void=False):
-        text_list = ['int', 'char', 'boolean']
-        if void:
-            text_list.append('void')
-        elem = compileToken(expected_type=['keyword', 'identifier'], expected_text=text_list)
-        return elem
+    def compileType():
+        return compileOrAlt([
+            (compileToken, ['keyword','int']),
+            (compileToken, ['keyword','char']),
+            (compileToken, ['keyword','boolean'])
+        ])
         
     def compileSubroutineDec():
-        root = ET.Element('subroutineDec')
-        child_list = [compileToken(expected_type='keyword', expected_text=['constructor', 'function', 'method']),
-                      compileType(void=True),
-                      compileToken(expected_type='identifier'),
-                      compileParameterList(),
-                      compileSubBody()]
-        for child in child_list:
-            root.append(child)
-        return root
-    def compileSubroutineDecAlt():
-        
         def compileSubDecKwd():
-            return compileToken(expected_type='keyword', expected_text=['constructor', 'function', 'method'])
-        
-        def compileSubType():
-            return compileType(void=True)
+            return compileOrAlt([
+                (compileToken, ['keyword','constructor']),
+                (compileToken, ['keyword','function']),
+                (compileToken, ['keyword','method'])
+            ])
 
-        def compileSubName():
-            return compileToken(expected_type='identifier')
+        def compileTypeVoid():
+            return compileOrAlt([
+                (compileToken, ['keyword','int']),
+                (compileToken, ['keyword','char']),
+                (compileToken, ['keyword','boolean']),
+                (compileToken, ['keyword','void'])
+            ])
 
-        def compileLPar():
-            return compileToken(expected_type='symbol', expected_text='(')
-        
-        def compileRPar():
-            return compileToken(expected_type='symbol', expected_text=')')
+        def compileParamList():
+            def formGroup1():
+                return compileGroup([
+                    (compileType, []),
+                    (compileToken, ['identifier', None])
+                ])
 
-        def compileParameterList():
+            def formGroup2():
+                return compileGroup([
+                    (compileToken, ['symbol', ',']),
+                    (compileType, []),
+                    (compileToken, ['identifier', None])
+                ])
+            def formGroup3():
+                return compileGroup([
+                    (formGroup1, []),
+                    (compileZeroOrMore, [formGroup2])
+                ])
+            def formGroup4():
+               return compileZeroOrOne(formGroup3)
+
+            child_list = formGroup4()
             root = ET.Element('parameterList')
-            child_list = compileTokenList(('symbol',')'), ('symbol',','), [compileType, compileVarName], include_stop=False)
-            print(child_list)
-            for child in child_list:
-                root.append(child)
-            return root
-        
-        child_list = compileTokenListSeq([compileSubDecKwd,
-                                         compileSubType,
-                                         compileSubName,
-                                         compileLPar,
-                                         compileParameterList,
-                                         compileRPar])
+            if child_list != None:
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                root.text = '\r\n'
+                return root
+            
+
+        def formSubGr():
+            def formGroup2():
+                return compileGroup([
+                    (compileSubDecKwd, []),
+                    (compileTypeVoid, []),
+                    (compileToken, ['identifier', None]),
+                    (compileToken, ['symbol', '(']),
+                    (compileParamList, []),
+                    (compileToken, ['symbol', ')']),
+                    (compileSubBody, [])
+                ])
+            return compileZeroOrMore(formGroup2)
+            
+        child_list = formSubGr()
         if child_list != []:
             root = ET.Element('subroutineDec')
             for child in child_list:
                 root.append(child)
             return root
         else:
-            return None
-
-    
+            return []
 
     def compileSubBody():
-        root = ET.Element('subroutineBody')
-        child_list = [compileToken(expected_type='symbol', expected_text='{'),
-                    compileVarDec(),
-                    compileStatements(),
-                    compileToken(expected_type='symbol', expected_text='}')]
-        for child in child_list:
-            root.append(child)
-        return root
+        def compileVarDec():
+            def compileVarNameGr():
+                def formGroup1():
+                    return compileGroup([
+                        (compileToken, ['symbol', ',']),
+                        (compileToken, ['identifier', None])
+                    ])
+                return compileZeroOrMore(formGroup1)
 
-    def compileVarDec():
-        root = ET.Element('varDec')
-        # child_list = [compileToken(expected_type='keyword', expected_text='var'),
-        #               compileType()] + compileTokenList(',', ('symbol',';'), 'identifier')
-        for child in child_list:
-            root.append(child)
-        return root
+
+            def formGroup():
+                return compileGroup([
+                    (compileToken, ['keyword', 'var']),
+                    (compileType, []),
+                    (compileToken, ['identifier', None]),
+                    (compileVarNameGr, []),
+                    (compileToken, ['symbol',';'])
+                ])
+
+            child_list = compileZeroOrMore(formGroup)
+            root = ET.Element('varDec')
+            if child_list != []:
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                root.text = '\r\n'
+                return root
+
+        def formBodyGr():
+            return compileGroup([
+                    (compileToken, ['symbol', '{']),
+                    (compileVarDec, []),
+                    (compileStatements, []),
+                    (compileToken, ['symbol', '}'])
+                ])
+
+        child_list = formBodyGr()
+        root = ET.Element('subroutineBody')
+        if child_list != []:
+            for child in child_list:
+                root.append(child)
+            return root
+        else:
+            root.text = '\r\n'
+            return root
+
 
     def compileStatements():
         root = ET.Element('statements')
