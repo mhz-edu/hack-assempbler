@@ -236,9 +236,10 @@ def compile(tokenizer):
             try:
                 elem = fn()
                 try:
-                    result.extend(elem)
-                except TypeError:
+                    elem.tag
                     result.append(elem)
+                except AttributeError:
+                    result.extend(elem)
             except ValueError:
                 break
         return result
@@ -282,9 +283,9 @@ def compile(tokenizer):
         elem = compileClassVarDec()
         if elem != []:
             child_list.append(elem)
-        elem = compileSubroutineDec()
+        elem = compileZeroOrMore(compileSubroutineDec)
         if elem != []:
-            child_list.append(elem)
+            child_list.extend(elem)
         child_list.append(compileToken(expected_type='symbol', expected_text='}'))
         for child in child_list:
             if child != None:
@@ -335,7 +336,8 @@ def compile(tokenizer):
         return compileOrAlt([
             (compileToken, ['keyword','int']),
             (compileToken, ['keyword','char']),
-            (compileToken, ['keyword','boolean'])
+            (compileToken, ['keyword','boolean']),
+            (compileToken, ['identifier', None])
         ])
         
     def compileSubroutineDec():
@@ -351,6 +353,7 @@ def compile(tokenizer):
                 (compileToken, ['keyword','int']),
                 (compileToken, ['keyword','char']),
                 (compileToken, ['keyword','boolean']),
+                (compileToken, ['identifier', None]),
                 (compileToken, ['keyword','void'])
             ])
 
@@ -387,17 +390,15 @@ def compile(tokenizer):
             
 
         def formSubGr():
-            def formGroup2():
-                return compileGroup([
-                    (compileSubDecKwd, []),
-                    (compileTypeVoid, []),
-                    (compileToken, ['identifier', None]),
-                    (compileToken, ['symbol', '(']),
-                    (compileParamList, []),
-                    (compileToken, ['symbol', ')']),
-                    (compileSubBody, [])
-                ])
-            return compileZeroOrMore(formGroup2)
+            return compileGroup([
+                (compileSubDecKwd, []),
+                (compileTypeVoid, []),
+                (compileToken, ['identifier', None]),
+                (compileToken, ['symbol', '(']),
+                (compileParamList, []),
+                (compileToken, ['symbol', ')']),
+                (compileSubBody, [])
+            ])
             
         child_list = formSubGr()
         if child_list != []:
@@ -458,8 +459,177 @@ def compile(tokenizer):
 
 
     def compileStatements():
+        def compileStatement():
+            stmnts = [compileLet, compileIf, compileWhile, compileDo, compileReturn]
+            for fn in stmnts:
+                try:
+                    elem = fn()
+                    if elem != None:
+                        return elem
+                except ValueError:
+                    continue
+            raise ValueError('Cannot parse')
+
+        def compileLet():
+            def formGroup1():
+                return compileGroup([
+                    (compileToken, ['symbol', '[']),
+                    (compileExpression, []),
+                    (compileToken, ['symbol', ']'])
+                ])
+
+            def compileSubExpr():
+                elem = compileZeroOrOne(formGroup1)
+                if elem != None:
+                    return elem
+                else:
+                    return []
+
+            def formGroup2():
+                return compileGroup([
+                    (compileToken, ['keyword', 'let']),
+                    (compileToken, ['identifier', None]),
+                    (compileSubExpr, []),
+                    (compileToken, ['symbol', '=']),
+                    (compileExpression, []),
+                    (compileToken, ['symbol', ';'])
+                ])
+            child_list = formGroup2()
+
+            if child_list != []:
+                root = ET.Element('letStatement')
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                return []
+
+        def compileIf():
+
+            def formElseGroup():
+                return compileGroup([
+                    (compileToken, ['keyword', 'else']),
+                    (compileToken, ['symbol', '{']),
+                    (compileStatements, []),
+                    (compileToken, ['symbol', '}'])
+                ])
+
+            def compileElseExpr():
+                elem = compileZeroOrOne(formElseGroup)
+                if elem != None:
+                    return elem
+                else:
+                    return []
+            
+            def formGroup2():
+                return compileGroup([
+                    (compileToken, ['keyword', 'if']),
+                    (compileToken, ['symbol', '(']),
+                    (compileExpression, []),
+                    (compileToken, ['symbol', ')']),
+                    (compileToken, ['symbol', '{']),
+                    (compileStatements, []),
+                    (compileToken, ['symbol', '}']),
+                    (compileElseExpr, [])
+                ])
+
+            child_list = formGroup2()
+
+            if child_list != []:
+                root = ET.Element('ifStatement')
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                return []
+
+
+        def compileWhile():
+            def formGroup2():
+                return compileGroup([
+                    (compileToken, ['keyword', 'while']),
+                    (compileToken, ['symbol', '(']),
+                    (compileExpression, []),
+                    (compileToken, ['symbol', ')']),
+                    (compileToken, ['symbol', '{']),
+                    (compileStatements, []),
+                    (compileToken, ['symbol', '}'])
+                ])
+
+            child_list = formGroup2()
+
+            if child_list != []:
+                root = ET.Element('whileStatement')
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                return []
+
+        def compileDo():
+            def formGroup2():
+                return compileGroup([
+                    (compileToken, ['keyword', 'do']),
+                    (compileSubCall, []),
+                    (compileToken, ['symbol', ';'])
+                ])
+
+            child_list = formGroup2()
+
+            if child_list != []:
+                root = ET.Element('doStatement')
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                return []
+
+        def compileReturn():
+            def compileRetExpr():
+                elem = compileZeroOrOne(compileExpression)
+                if elem != None:
+                    return elem
+                else:
+                    return []
+
+            def formGroup2():
+                return compileGroup([
+                    (compileToken, ['keyword', 'return']),
+                    (compileRetExpr, []),
+                    (compileToken, ['symbol', ';'])
+                ])
+
+            child_list = formGroup2()
+
+            if child_list != []:
+                root = ET.Element('returnStatement')
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                return []
+
+        print('compiling statements')
+        child_list = compileZeroOrMore(compileStatement)
+        print('available statements: ', child_list)
         root = ET.Element('statements')
-        return root
+        if child_list != []:
+            for child in child_list:
+                print(child)
+                root.append(child)
+            print(ET.dump(root))
+            return root
+        else:
+            root.text = '\r\n'
+            return root
+
+    def compileExpression():
+        return compileToken('identifier', None)
+        # return ET.Element('expression')
+    
+    def compileSubCall():
+        return compileToken('identifier', None)
+        # return ET.Element('subroutineCall')
 
     return compileClass()
 
