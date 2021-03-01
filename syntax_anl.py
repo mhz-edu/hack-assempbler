@@ -56,7 +56,7 @@ TOKEN_SEPARATOR = SYMBOLS + [' ', '\r']
 PATTERNS = (
     ('|'.join(KEYWORDS), 'keyword',0),
     ('|^\\'.join(SYMBOLS), 'symbol',0),
-    ('^([1-9][0-9]*$)',  'integerConstant',1),
+    ('^([0-9]*$)',  'integerConstant',1),
     ('^\"(.*)\"', 'stringConstant',1),
     ('^([a-zA-Z_][a-zA-Z_0-9]*$)', 'identifier',1)
 )
@@ -159,7 +159,7 @@ def compile(tokenizer):
     def createXmlElement(token):
         token_type, token_text = token
         elem = ET.Element(token_type)
-        elem.text = token_text
+        elem.text = ' {} '.format(token_text)
         return elem
         
 
@@ -753,7 +753,7 @@ def compile(tokenizer):
     return compileClass()
 
 def writeFile(data, filename):
-    f = open('{name}.asm'.format(name=filename), 'w')
+    f = open('{name}.xml'.format(name=filename), 'w')
     f.write(data)
     f.close()
 
@@ -766,22 +766,21 @@ def parse(path):
     parsed_data = ''
     with open(p, mode='rb') as f:
         tokenizer = tokenIterator(f)
-        print(compile(tokenizer))
-            # print(compile(tokenIterator(f)))
-    #print(parsed_data)
-    # writeFile(parsed_data, FILE['name'])
+        parsed_data = compile(tokenizer)
+    writeFile(parsed_data, FILE['name'])
 
 def parsedir(path):
     p = Path(path)
     FILE['dir'] = p.name
     parsed_data = ''
     FILE['name'] = 'Sys'
-    for f in p.glob('*.vm'):
-        FILE['name'] = f.stem
+    for fl in p.glob('*.jack'):
+        FILE['name'] = fl.stem
         print('Opening dir file %s' % FILE['name'])
-        for line in f.open():
-            parsed_data += parseLine(line)
-    # writeFile(parsed_data, FILE['dir'])        
+        with open(fl, mode='rb') as f:
+            tokenizer = tokenIterator(f)
+            parsed_data = compile(tokenizer)
+        writeFile(parsed_data, FILE['name'])    
 
 def main ():
     argparser = argparse.ArgumentParser(description='Produce xml from JACK program')
