@@ -56,26 +56,10 @@ TOKEN_SEPARATOR = SYMBOLS + [' ', '\r']
 PATTERNS = (
     ('|'.join(KEYWORDS), 'keyword',0),
     ('|^\\'.join(SYMBOLS), 'symbol',0),
-    ('^([1-9][0-9]*$)',  'integer',1),
-    ('^\"(.*)\"', 'string',1),
+    ('^([1-9][0-9]*$)',  'integerConstant',1),
+    ('^\"(.*)\"', 'stringConstant',1),
     ('^([a-zA-Z_][a-zA-Z_0-9]*$)', 'identifier',1)
 )
-
-# GRAMMAR = {
-#     'class': {
-#         'node': {
-#             'token': ('keyword', 'class'),
-#             'rule': addElem
-#         },
-#         'childList': ['className']
-#     },
-#     'className': {
-#         'node': {
-#             'token': ('identifier'),
-#             'rule': addElem
-#         }
-#     }
-# }
 
 class tokenIterator:
     def __init__(self, input_file):
@@ -107,9 +91,12 @@ class tokenIterator:
                     self.input_file.readline()
                     return next(self)
                 elif next_char == '*':
-                    bc_end = self.input_file.read(2).decode('utf-8')
-                    while(bc_end and bc_end != '*/'):
-                        bc_end = self.input_file.read(2).decode('utf-8')
+                    blockcomment_end1 = self.input_file.read(1).decode('utf-8')
+                    blockcomment_end2 = self.input_file.read(1).decode('utf-8')
+                    while not(blockcomment_end1 == '*' and blockcomment_end2 == '/') and not(blockcomment_end1 == '' or blockcomment_end2 == ''):
+                        blockcomment_end1 = self.input_file.read(1).decode('utf-8')
+                        if blockcomment_end1 == '*':
+                            blockcomment_end2 = self.input_file.read(1).decode('utf-8')
                     return next(self)
                 else:
                     # print("not a comment")
@@ -179,10 +166,10 @@ def compile(tokenizer):
     def compileToken(expected_type, expected_text=None, allow_to_fail=False, tokenizer=tokenizer):
         if tokenizer.getStatus():
             token_type, token_text = next(tokenizer)
-            print('Retrieved next token: ', token_type, token_text)
+            # print('Retrieved next token: ', token_type, token_text)
         else:
             token_type, token_text = tokenizer.getCurrentToken()
-            print('Using existing token: ', token_type, token_text)
+            # print('Using existing token: ', token_type, token_text)
         if (expected_text == None):
             if (expected_type == token_type):
                 elem = createXmlElement((token_type, token_text))
@@ -244,45 +231,15 @@ def compile(tokenizer):
                 break
         return result
 
-    def compileKwd():
-        return compileGroup([
-            (compileOrAlt, [[
-                [compileToken, ['keyword', 'field']],
-                [compileToken, ['keyword', 'static']]
-            ]]),
-            (compileToken, ['keyword', 'int']),
-            (compileToken, ['identifier', None]),
-        ])
-
-    def compileGrp1():
-        return compileGroup([
-            (compileType, []),
-            (compileToken, ['identifier', None])
-        ])
-    def compileGrp2():
-        return compileGroup([
-            (compileToken, ['symbol', ',']),
-            (compileType, []),
-            (compileToken, ['identifier', None])
-        ])
-    def compileGrp3():
-        return compileGroup([
-            (compileGrp1, []),
-            (compileZeroOrMore, [compileGrp2])
-        ])
-
-    def compileGrp4():
-        return compileZeroOrOne(compileGrp3)
-
     def compileClass():
         root = ET.Element('class')
         child_list = []
         child_list.append(compileToken(expected_type='keyword', expected_text='class'))
         child_list.append(compileToken(expected_type='identifier'))
         child_list.append(compileToken(expected_type='symbol', expected_text='{'))
-        elem = compileClassVarDec()
+        elem = compileZeroOrMore(compileClassVarDec)
         if elem != []:
-            child_list.append(elem)
+            child_list.extend(elem)
         elem = compileZeroOrMore(compileSubroutineDec)
         if elem != []:
             child_list.extend(elem)
@@ -309,15 +266,13 @@ def compile(tokenizer):
             return compileZeroOrMore(formGroup1)
 
         def formClassVarGr():
-            def formGroup2():
-                return compileGroup([
-                    (compileClassVarKwd, []),
-                    (compileType, []),
-                    (compileToken, ['identifier', None]),
-                    (compileVarNameGr, []),
-                    (compileToken, ['symbol', ';'])
-                ])
-            return compileZeroOrMore(formGroup2)
+            return compileGroup([
+                (compileClassVarKwd, []),
+                (compileType, []),
+                (compileToken, ['identifier', None]),
+                (compileVarNameGr, []),
+                (compileToken, ['symbol', ';'])
+            ])
 
         child_list = formClassVarGr()
         if child_list != []:
@@ -429,15 +384,19 @@ def compile(tokenizer):
                     (compileToken, ['symbol',';'])
                 ])
 
-            child_list = compileZeroOrMore(formGroup)
-            root = ET.Element('varDec')
-            if child_list != []:
-                for child in child_list:
-                    root.append(child)
-                return root
-            else:
-                root.text = '\r\n'
-                return root
+            def compileVarDecLine():
+                child_list = formGroup()
+                root = ET.Element('varDec')
+                if child_list != []:
+                    for child in child_list:
+                        root.append(child)
+                    return root
+                else:
+                    root.text = '\r\n'
+                    return root    
+
+            return compileZeroOrMore(compileVarDecLine)
+            
 
         def formBodyGr():
             return compileGroup([
@@ -570,12 +529,12 @@ def compile(tokenizer):
             def formGroup2():
                 return compileGroup([
                     (compileToken, ['keyword', 'do']),
+                    (compileToken, ['identifier', None]),
                     (compileSubCall, []),
                     (compileToken, ['symbol', ';'])
                 ])
 
             child_list = formGroup2()
-
             if child_list != []:
                 root = ET.Element('doStatement')
                 for child in child_list:
@@ -609,27 +568,187 @@ def compile(tokenizer):
             else:
                 return []
 
-        print('compiling statements')
         child_list = compileZeroOrMore(compileStatement)
-        print('available statements: ', child_list)
         root = ET.Element('statements')
         if child_list != []:
             for child in child_list:
-                print(child)
                 root.append(child)
-            print(ET.dump(root))
             return root
         else:
             root.text = '\r\n'
             return root
 
     def compileExpression():
-        return compileToken('identifier', None)
-        # return ET.Element('expression')
+        def formTerm():
+            terms = [compileIntConst, compileStrConst, compileKwdConst, formParGr, formUnaryGr,formIdentCase]
+            for fn in terms:
+                try:
+                    elem = fn()
+                    if elem != None:
+                        return elem
+                except ValueError:
+                    continue
+            raise ValueError('Cannot parse')
+
+        def compileTerm():
+            root = ET.Element('term')
+            elem = formTerm()
+            try:
+                elem.tag
+                root.append(elem)
+            except AttributeError:
+                root.extend(elem)
+            return root
+
+        def compileIntConst():
+            return compileToken('integerConstant', None)
+
+        def compileStrConst():
+            return compileToken('stringConstant', None)
+
+
+        def compileKwdConst():
+            return compileOrAlt([
+                (compileToken, ['keyword','true']),
+                (compileToken, ['keyword','false']),
+                (compileToken, ['keyword','null']),
+                (compileToken, ['keyword','this'])
+            ])
+        
+        def compileOp():
+            return compileOrAlt([
+                (compileToken, ['symbol','+']),
+                (compileToken, ['symbol','-']),
+                (compileToken, ['symbol','*']),
+                (compileToken, ['symbol','/']),
+                (compileToken, ['symbol','&']),
+                (compileToken, ['symbol','|']),
+                (compileToken, ['symbol','<']),
+                (compileToken, ['symbol','>']),
+                (compileToken, ['symbol','='])
+            ])
+
+        def compileUnaryOp():
+            return compileOrAlt([
+                (compileToken, ['symbol','~']),
+                (compileToken, ['symbol','-'])
+            ])
+
+
+        
+        
+        
+        
+        def formTermsGr():
+            def formGroup1():
+                return compileGroup([
+                    (compileOp, []),
+                    (compileTerm, [])
+                ])
+
+            return compileGroup([
+                (compileTerm, []),
+                (compileZeroOrMore, [formGroup1])
+            ])
+
+        def formParGr():
+            return compileGroup([
+                (compileToken, ['symbol','(']),
+                (compileExpression, []),
+                (compileToken, ['symbol',')']),
+            ])
+
+        def formUnaryGr():
+            return compileGroup([
+                (compileUnaryOp, []),
+                (compileTerm, [])
+            ])
+
+        def formIdentCase():
+            def formGroup1():
+                return compileGroup([
+                    (compileToken, ['symbol','[']),
+                    (compileExpression, []),
+                    (compileToken, ['symbol',']'])
+                ])
+
+            # return formGroup3()
+            result = [compileToken('identifier', None)]
+            cases = [formGroup1, compileSubCall]
+            for fn in cases:
+                try:
+                    elem = fn()
+                    if elem != []:
+                        result.extend(elem)
+                        return result
+                except ValueError:
+                    continue
+            return result
+
+        child_list = formTermsGr()
+
+        if child_list != []:
+            root = ET.Element('expression')
+            for child in child_list:
+                root.append(child)
+            return root
+        else:
+            return []
     
+    
+    def compileExprList():
+            def formGroup1():
+                return compileGroup([
+                    (compileToken, ['symbol', ',']),
+                    (compileExpression, [])
+                ])
+            def formGroup2():
+                return compileGroup([
+                    (compileExpression, []),
+                    (compileZeroOrMore, [formGroup1])
+                ])
+            def formGroup3():
+               return compileZeroOrOne(formGroup2)
+            
+            child_list = formGroup3()
+            root = ET.Element('expressionList')
+            if child_list != None:
+                for child in child_list:
+                    root.append(child)
+                return root
+            else:
+                root.text = '\r\n'
+                return root
+        
+    
+
+
     def compileSubCall():
-        return compileToken('identifier', None)
-        # return ET.Element('subroutineCall')
+        def formGroup1():
+            return compileGroup([
+                (compileToken, ['symbol', '.']),
+                (compileToken, ['identifier', None]),
+                (compileToken, ['symbol','(']),
+                (compileExprList, []),
+                (compileToken, ['symbol',')']),
+            ])
+        
+        def formGroup2():
+                return compileGroup([
+                    (compileToken, ['symbol', '(']),
+                    (compileExprList, []),
+                    (compileToken, ['symbol',')']),
+                ])
+        
+        cases = [formGroup1, formGroup2]
+        for fn in cases:
+            try:
+                elem = fn()
+                if elem != []:
+                    return elem
+            except ValueError:
+                continue
+        raise ValueError('Cannot parse')
 
     return compileClass()
 
