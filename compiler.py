@@ -54,12 +54,30 @@ SYMBOLS = ['{',
 TOKEN_SEPARATOR = SYMBOLS + [' ', '\r']
 
 PATTERNS = (
-    ('|'.join(KEYWORDS), 'keyword',0),
+    ('|'.join(['^{}$'.format(x) for x in KEYWORDS]), 'keyword',0),
     ('|^\\'.join(SYMBOLS), 'symbol',0),
     ('^([0-9]*$)',  'integerConstant',1),
     ('^\"(.*)\"', 'stringConstant',1),
     ('^([a-zA-Z_][a-zA-Z_0-9]*$)', 'identifier',1)
 )
+CLASS_ST = []
+SUB_ST = []
+CLASS_INDEX = {'field':  0,
+               'static': 0}
+SUB_INDEX = {'argument': 0,
+             'local':    0}
+CUR_ID = {}
+
+def varDefined(var_name):
+    sub_vars = [x['name'] for x in SUB_ST]
+    class_vars = [x['name'] for x in CLASS_ST]
+    if var_name in sub_vars:
+        return SUB_ST[sub_vars.index(var_name)]
+    elif var_name in class_vars:
+        return CLASS_ST[class_vars.index(var_name)]
+    else:
+        return None
+
 
 class tokenIterator:
     def __init__(self, input_file):
@@ -156,14 +174,15 @@ def matchApplyBuilder(pattern, token_type, match_group):
 
 def compile(tokenizer):
 
-    def createXmlElement(token):
+    def createXmlElement(token, attributes={}):
         token_type, token_text = token
         elem = ET.Element(token_type)
-        elem.text = ' {} '.format(token_text)
+        elem.text = '{}'.format(token_text)
+        elem.attrib = attributes
         return elem
         
 
-    def compileToken(expected_type, expected_text=None, allow_to_fail=False, tokenizer=tokenizer):
+    def compileToken(expected_type, expected_text=None, allow_to_fail=False, tokenizer=tokenizer, attributes={}):
         if tokenizer.getStatus():
             token_type, token_text = next(tokenizer)
             # print('Retrieved next token: ', token_type, token_text)
@@ -172,7 +191,7 @@ def compile(tokenizer):
             # print('Using existing token: ', token_type, token_text)
         if (expected_text == None):
             if (expected_type == token_type):
-                elem = createXmlElement((token_type, token_text))
+                elem = createXmlElement((token_type, token_text), attributes)
                 tokenizer.setProcessed()
                 return elem
             else:
@@ -182,7 +201,7 @@ def compile(tokenizer):
                     raise ValueError('Expeting type "{}", got type "{}"'.format(expected_type, token_type))    
         else:
             if (expected_text == token_text) and (expected_type == token_type):
-                elem = createXmlElement((token_type, token_text))
+                elem = createXmlElement((token_type, token_text),attributes)
                 tokenizer.setProcessed()
                 return elem
             else:
@@ -192,11 +211,15 @@ def compile(tokenizer):
                     raise ValueError('Expeting {}, got {}'.format(expected_text, token_text))
 
 
-    def compileOrAlt(fns):
+    def compileOrAlt(fns, store_in_st=''):
         for fn, arg in fns:
             elem = fn(*arg, allow_to_fail=True)
             if elem != None:
-                return elem
+                if store_in_st == '':
+                    return elem
+                else:
+                    CUR_ID[store_in_st] = elem.text
+                    return elem
         raise ValueError('Unexpected token')
 
     def compileGroup(fns):
@@ -235,7 +258,7 @@ def compile(tokenizer):
         root = ET.Element('class')
         child_list = []
         child_list.append(compileToken(expected_type='keyword', expected_text='class'))
-        child_list.append(compileToken(expected_type='identifier'))
+        child_list.append(compileClassName())
         child_list.append(compileToken(expected_type='symbol', expected_text='{'))
         elem = compileZeroOrMore(compileClassVarDec)
         if elem != []:
@@ -248,33 +271,65 @@ def compile(tokenizer):
             if child != None:
                 root.append(child)
         return ET.tostring(root, encoding='unicode', method='xml')
+
+    def compileClassName():
+        atr = {'category':'class', 'used':'False'}
+        return compileToken(expected_type='identifier', attributes=atr)
  
 
     def compileClassVarDec():
-        def compileClassVarKwd():
-            return compileOrAlt([
-                (compileToken, ['keyword','static']),
-                (compileToken, ['keyword','field'])
-            ])
+        def compileClassVarField():
+            global CUR_ID
+            CUR_ID = {}
+            CUR_ID['category'] = 'field'
+            return compileToken('keyword','field')
+            
+        def compileClassVarStatic():
+            global CUR_ID
+            CUR_ID = {}
+            CUR_ID['category'] = 'static'
+            return compileToken('keyword','static')
 
-        def compileVarNameGr():
+        def compileVarNameGr(atr):
             def formGroup1():
                 return compileGroup([
                     (compileToken, ['symbol', ',']),
-                    (compileToken, ['identifier', None])
+                    (compileVarName, [atr, False, True])
                 ])
             return compileZeroOrMore(formGroup1)
 
-        def formClassVarGr():
+        def formClassVarField():
+            atr = {'category':'field', 'used':'False'}
             return compileGroup([
-                (compileClassVarKwd, []),
+                (compileClassVarField, []),
                 (compileType, []),
-                (compileToken, ['identifier', None]),
-                (compileVarNameGr, []),
+                (compileVarName, [atr, False, True]),
+                (compileVarNameGr, [atr]),
+                (compileToken, ['symbol', ';'])
+            ])
+        
+        def formClassVarStatic():
+            atr = {'category':'static', 'used':'False'}
+            return compileGroup([
+                (compileClassVarStatic, []),
+                (compileType, []),
+                (compileVarName, [atr, False, True]),
+                (compileVarNameGr, [atr]),
                 (compileToken, ['symbol', ';'])
             ])
 
-        child_list = formClassVarGr()
+        def formClassVarDec():
+            stmnts = [formClassVarField, formClassVarStatic]
+            for fn in stmnts:
+                try:
+                    elem = fn()
+                    if elem != None:
+                        return elem
+                except ValueError:
+                    continue
+            raise ValueError('Cannot parse')
+
+        child_list = formClassVarDec()
         if child_list != []:
             root = ET.Element('classVarDec')
             for child in child_list:
@@ -283,8 +338,24 @@ def compile(tokenizer):
         else:
             return []
 
-    def compileVarName():
-        return compileToken('identifier', None)
+    def compileVarName(atr={}, allow_to_fail=False, store=False):
+        global CUR_ID
+        CUR_ID['name'] = ''
+        CUR_ID['index'] = ''
+        elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
+        if store:
+            # index = len(list(filter(lambda x: x['category']==CUR_ID['category'], CLASS_ST)))
+            index = CLASS_INDEX[CUR_ID['category']]
+            CUR_ID['name'] = elem.text
+            CUR_ID['index'] = str(index)
+            CLASS_INDEX[CUR_ID['category']] += 1
+            elem.attrib = CUR_ID.copy()
+            CLASS_ST.append(CUR_ID.copy())
+            print(CUR_ID)
+            
+            return elem
+        else:
+            return elem
 
 
     def compileType():
@@ -292,10 +363,13 @@ def compile(tokenizer):
             (compileToken, ['keyword','int']),
             (compileToken, ['keyword','char']),
             (compileToken, ['keyword','boolean']),
-            (compileToken, ['identifier', None])
-        ])
+            (compileVarName, [])
+        ], 'type')
         
     def compileSubroutineDec():
+        global SUB_INDEX, SUB_ST
+        SUB_ST = []
+        SUB_INDEX = {'argument': 0, 'local':    0}
         def compileSubDecKwd():
             return compileOrAlt([
                 (compileToken, ['keyword','constructor']),
@@ -312,18 +386,38 @@ def compile(tokenizer):
                 (compileToken, ['keyword','void'])
             ])
 
+        def compileParamName(atr={}, allow_to_fail=False, store=False):
+            global CUR_ID
+            CUR_ID['name'] = ''
+            CUR_ID['index'] = ''
+            elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
+            if store:
+                index = SUB_INDEX[CUR_ID['category']]
+                CUR_ID['name'] = elem.text
+                CUR_ID['index'] = str(index)
+                SUB_INDEX[CUR_ID['category']] += 1
+                elem.attrib = CUR_ID.copy()
+                SUB_ST.append(CUR_ID.copy())
+                print(CUR_ID)
+                
+                return elem
+            else:
+                return elem
+
         def compileParamList():
+            global CUR_ID
+            CUR_ID['category'] = 'argument'
             def formGroup1():
                 return compileGroup([
                     (compileType, []),
-                    (compileToken, ['identifier', None])
+                    (compileParamName, [{}, False, True])
                 ])
 
             def formGroup2():
                 return compileGroup([
                     (compileToken, ['symbol', ',']),
                     (compileType, []),
-                    (compileToken, ['identifier', None])
+                    (compileParamName, [{}, False, True])
                 ])
             def formGroup3():
                 return compileGroup([
@@ -366,11 +460,13 @@ def compile(tokenizer):
 
     def compileSubBody():
         def compileVarDec():
+            global CUR_ID
+            CUR_ID['category'] = 'local'
             def compileVarNameGr():
                 def formGroup1():
                     return compileGroup([
                         (compileToken, ['symbol', ',']),
-                        (compileToken, ['identifier', None])
+                        (compileLocalVarName, [{}, False, True])
                     ])
                 return compileZeroOrMore(formGroup1)
 
@@ -379,10 +475,29 @@ def compile(tokenizer):
                 return compileGroup([
                     (compileToken, ['keyword', 'var']),
                     (compileType, []),
-                    (compileToken, ['identifier', None]),
+                    (compileLocalVarName, [{}, False, True]),
                     (compileVarNameGr, []),
                     (compileToken, ['symbol',';'])
                 ])
+
+            def compileLocalVarName(atr={}, allow_to_fail=False, store=False):
+                global CUR_ID
+                CUR_ID['name'] = ''
+                CUR_ID['index'] = ''
+                elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
+                if store:
+                    # index = len(list(filter(lambda x: x['category']==CUR_ID['category'], CLASS_ST)))
+                    index = SUB_INDEX[CUR_ID['category']]
+                    CUR_ID['name'] = elem.text
+                    CUR_ID['index'] = str(index)
+                    SUB_INDEX[CUR_ID['category']] += 1
+                    elem.attrib = CUR_ID.copy()
+                    SUB_ST.append(CUR_ID.copy())
+                    print(CUR_ID)
+                    
+                    return elem
+                else:
+                    return elem
 
             def compileVarDecLine():
                 child_list = formGroup()
@@ -443,11 +558,22 @@ def compile(tokenizer):
                     return elem
                 else:
                     return []
+            
+            def compileLetVarName():
+                elem = compileToken('identifier', None)
+                var = varDefined(elem.text)
+                if var != None:
+                    elem.attrib = var
+                    elem.attrib['used'] = 'True'
+                    return elem
+                else:
+                    raise SyntaxError('{} variable is not defined'.format(elem.text))
+
 
             def formGroup2():
                 return compileGroup([
                     (compileToken, ['keyword', 'let']),
-                    (compileToken, ['identifier', None]),
+                    (compileLetVarName, []),
                     (compileSubExpr, []),
                     (compileToken, ['symbol', '=']),
                     (compileExpression, []),
@@ -526,10 +652,20 @@ def compile(tokenizer):
                 return []
 
         def compileDo():
+            def compileDoVarName():
+                elem = compileToken('identifier', None)
+                var = varDefined(elem.text)
+                if var != None:
+                    elem.attrib = var
+                    elem.attrib['used'] = 'True'
+                    return elem
+                else:
+                    return elem
+
             def formGroup2():
                 return compileGroup([
                     (compileToken, ['keyword', 'do']),
-                    (compileToken, ['identifier', None]),
+                    (compileDoVarName, []),
                     (compileSubCall, []),
                     (compileToken, ['symbol', ';'])
                 ])
@@ -672,8 +808,17 @@ def compile(tokenizer):
                     (compileToken, ['symbol',']'])
                 ])
 
-            # return formGroup3()
-            result = [compileToken('identifier', None)]
+            def compileExpVarName():
+                elem = compileToken('identifier', None)
+                var = varDefined(elem.text)
+                if var != None:
+                    elem.attrib = var
+                    elem.attrib['used'] = 'True'
+                    return elem
+                else:
+                    raise SyntaxError('{} variable is not defined'.format(elem.text))
+
+            result = [compileExpVarName()]
             cases = [formGroup1, compileSubCall]
             for fn in cases:
                 try:
@@ -767,6 +912,7 @@ def parse(path):
     with open(p, mode='rb') as f:
         tokenizer = tokenIterator(f)
         parsed_data = compile(tokenizer)
+    # print(parsed_data)
     writeFile(parsed_data, FILE['name'])
 
 def parsedir(path):
