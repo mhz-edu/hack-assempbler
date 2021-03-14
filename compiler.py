@@ -68,6 +68,20 @@ SUB_INDEX = {'argument': 0,
              'local':    0}
 CUR_ID = {}
 
+CLASS_NAME =''
+
+OPS = {'+':'add',
+       '-':'sub',
+       '*':'call Math.multiply',
+       '/':'call Math.divide',
+       '&':'and',
+       '|':'or',
+       '<':'lt',
+       '>':'gt',
+       '=':'eq'}
+
+UNOPS = {'-':'neg', '~':'neg'}
+
 def varDefined(var_name):
     sub_vars = [x['name'] for x in SUB_ST]
     class_vars = [x['name'] for x in CLASS_ST]
@@ -209,7 +223,34 @@ def compile(tokenizer):
                     return None
                 else:
                     raise ValueError('Expeting {}, got {}'.format(expected_text, token_text))
-
+    
+    def compileTokenAlt(expected_type, expected_text=None, code=str, allow_to_fail=False):
+        if tokenizer.getStatus():
+            token_type, token_text = next(tokenizer)
+            # print('Retrieved next token: ', token_type, token_text)
+        else:
+            token_type, token_text = tokenizer.getCurrentToken()
+            # print('Using existing token: ', token_type, token_text)
+        if (expected_text == None):
+            if (expected_type == token_type):
+                elem = createXmlElement((token_type, code(token_text)), {})
+                tokenizer.setProcessed()
+                return elem
+            else:
+                if allow_to_fail:
+                    return None
+                else:
+                    raise ValueError('Expeting type "{}", got type "{}"'.format(expected_type, token_type))    
+        else:
+            if (expected_text == token_text) and (expected_type == token_type):
+                elem = createXmlElement((token_type, code(token_text)),{})
+                tokenizer.setProcessed()
+                return elem
+            else:
+                if allow_to_fail:
+                    return None
+                else:
+                    raise ValueError('Expeting {}, got {}'.format(expected_text, token_text))
 
     def compileOrAlt(fns, store_in_st=''):
         for fn, arg in fns:
@@ -274,7 +315,9 @@ def compile(tokenizer):
 
     def compileClassName():
         atr = {'category':'class', 'used':'False'}
-        return compileToken(expected_type='identifier', attributes=atr)
+        elem = compileToken(expected_type='identifier', attributes=atr)
+        CLASS_NAME = elem.text
+        return elem
  
 
     def compileClassVarDec():
@@ -368,8 +411,8 @@ def compile(tokenizer):
         
     def compileSubroutineDec():
         global SUB_INDEX, SUB_ST
-        SUB_ST = []
-        SUB_INDEX = {'argument': 0, 'local':    0}
+        SUB_ST = [{'category': 'argument', 'type': CLASS_NAME, 'name': 'this', 'index': '0'}]
+        SUB_INDEX = {'argument': 1, 'local':    0}
         def compileSubDecKwd():
             return compileOrAlt([
                 (compileToken, ['keyword','constructor']),
@@ -486,7 +529,6 @@ def compile(tokenizer):
                 CUR_ID['index'] = ''
                 elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
                 if store:
-                    # index = len(list(filter(lambda x: x['category']==CUR_ID['category'], CLASS_ST)))
                     index = SUB_INDEX[CUR_ID['category']]
                     CUR_ID['name'] = elem.text
                     CUR_ID['index'] = str(index)
@@ -517,9 +559,39 @@ def compile(tokenizer):
             return compileGroup([
                     (compileToken, ['symbol', '{']),
                     (compileVarDec, []),
-                    (compileStatements, []),
+                    (writeS, [compileStatements]),
                     (compileToken, ['symbol', '}'])
                 ])
+
+        def writeS(fn):
+            statements = fn()
+            return writeStatements(statements)
+
+        def writeStatements(statements):
+            result = ET.Element('code')
+            result.extend([writeSt(x) for x in statements])
+            return result
+
+        def writeSt(elem):
+            result = ET.Element('code')
+            if elem.tag == 'letStatement':
+                result.append(elem.find('code'))
+                let_ident_code = ET.Element('code')
+                let_ident = elem.find('identifier')
+
+                if let_ident.get('category') == 'field' or let_ident.get('category') == 'static':
+                    var_segment = 'this'
+                else:
+                    var_segment = let_ident.get('category')
+                let_ident_code.text = 'pop {} {}'.format(var_segment, let_ident.get('index'))
+                result.append(let_ident_code)
+                return result
+            elif elem.tag == 'doStatement':
+                result.append(writeSubCall(elem))
+                return result
+            else:
+                return elem
+
 
         child_list = formBodyGr()
         root = ET.Element('subroutineBody')
@@ -548,7 +620,7 @@ def compile(tokenizer):
             def formGroup1():
                 return compileGroup([
                     (compileToken, ['symbol', '[']),
-                    (compileExpression, []),
+                    (writeExpr, [compileExpression]),
                     (compileToken, ['symbol', ']'])
                 ])
 
@@ -576,7 +648,7 @@ def compile(tokenizer):
                     (compileLetVarName, []),
                     (compileSubExpr, []),
                     (compileToken, ['symbol', '=']),
-                    (compileExpression, []),
+                    (writeE, [compileExpression]),
                     (compileToken, ['symbol', ';'])
                 ])
             child_list = formGroup2()
@@ -683,7 +755,7 @@ def compile(tokenizer):
             def compileRetExpr():
                 elem = compileZeroOrOne(compileExpression)
                 if elem != None:
-                    return elem
+                    return writeExpr(elem)
                 else:
                     return []
 
@@ -713,6 +785,62 @@ def compile(tokenizer):
         else:
             root.text = '\r\n'
             return root
+
+
+    def writeE(fn):
+        expr = fn()
+        return writeExpr(expr)
+            
+
+    def writeExpr(elem):
+
+        def writeOp(elem, table):
+            result = ET.Element('code')
+            result.text = table[elem.text]
+            return result
+
+        def writeTermList(elem):
+            result = ET.Element('code')
+            if len(elem) > 1:
+                result.extend([writeTerm(elem[0]),
+                                writeTermList(elem[2:]),
+                                writeOp(elem[1], OPS)])
+            else:
+                result.extend([writeTerm(elem[0])])
+            return result
+
+        def writeTerm(elem):
+            result = ET.Element('code')
+            if len(elem) == 1:
+                if elem[0].tag == 'integerConstant':
+                    result.text = 'push constant {}'.format(elem[0].text)
+                   
+                elif elem[0].tag == 'identifier':
+                    if elem[0].get('category') == 'field' or elem[0].get('category') == 'static':
+                        var_segment = 'this'
+                    else:
+                        var_segment = elem[0].get('category')
+                    result.text = 'push {} {}'.format(var_segment, elem[0].get('index'))
+                   
+                elif elem[0].tag == 'keyword':
+                    mapping = {'null': 'constant 0', 'true': 'constant -1', 'false': 'constant 0', 'this': '???'}
+                    result.text = 'push {}'.format(mapping[elem[0].text])
+                return result
+            elif len(elem) == 2:
+                result.extend([writeTerm(elem[1]),
+                               writeOp(elem[0], UNOPS)])
+                return result
+            elif len(elem) == 3:
+                result.extend([writeExpr(elem[1])])
+                return result
+        ET.dump(elem)
+        if len(elem) == 1:
+            return writeTerm(elem[0])
+        else:
+            return writeTermList(elem)
+
+
+        
 
     def compileExpression():
         def formTerm():
@@ -770,11 +898,6 @@ def compile(tokenizer):
                 (compileToken, ['symbol','-'])
             ])
 
-
-        
-        
-        
-        
         def formTermsGr():
             def formGroup1():
                 return compileGroup([
@@ -818,6 +941,7 @@ def compile(tokenizer):
                 else:
                     raise SyntaxError('{} variable is not defined'.format(elem.text))
 
+        
             result = [compileExpVarName()]
             cases = [formGroup1, compileSubCall]
             for fn in cases:
@@ -830,6 +954,7 @@ def compile(tokenizer):
                     continue
             return result
 
+    
         child_list = formTermsGr()
 
         if child_list != []:
@@ -866,6 +991,22 @@ def compile(tokenizer):
                 return root
         
     
+    def writeSubCall(elem_list):
+        result = ET.Element('code')
+        idents = []
+        exprs = []
+        for item in elem_list:
+            if item.tag == 'identifier':
+                idents.append(item.text)
+            elif item.tag == 'expressionList':
+                exprs.extend(item)
+        
+        if exprs != []:
+            result.extend([writeExpr(x) for x in exprs])
+        call = ET.Element('code')
+        call.text = 'call {}'.format('.'.join(idents))
+        result.append(call)
+        return result
 
 
     def compileSubCall():
