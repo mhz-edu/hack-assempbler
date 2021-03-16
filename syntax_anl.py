@@ -54,7 +54,7 @@ SYMBOLS = ['{',
 TOKEN_SEPARATOR = SYMBOLS + [' ', '\r']
 
 PATTERNS = (
-    ('|'.join(KEYWORDS), 'keyword',0),
+    ('|'.join(['^{}$'.format(x) for x in KEYWORDS]), 'keyword',0),
     ('|^\\'.join(SYMBOLS), 'symbol',0),
     ('^([0-9]*$)',  'integerConstant',1),
     ('^\"(.*)\"', 'stringConstant',1),
