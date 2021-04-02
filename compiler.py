@@ -61,6 +61,7 @@ PATTERNS = (
     ('^([a-zA-Z_][a-zA-Z_0-9]*$)', 'identifier',1)
 )
 CLASS_ST = []
+CLASS_ST_NEW = []
 SUB_ST = []
 CLASS_INDEX = {'field':  0,
                'static': 0}
@@ -74,15 +75,15 @@ CLASS_NAME =''
 
 OPS = {'+':'add',
        '-':'sub',
-       '*':'call Math.multiply',
-       '/':'call Math.divide',
+       '*':'call Math.multiply 2',
+       '/':'call Math.divide 2',
        '&':'and',
        '|':'or',
        '<':'lt',
        '>':'gt',
        '=':'eq'}
 
-UNOPS = {'-':'neg', '~':'neg'}
+UNOPS = {'-':'neg', '~':'not'}
 
 CODE = ''
 
@@ -96,6 +97,12 @@ def varDefined(var_name):
     else:
         return None
 
+def findVar(name):
+    var_list = CLASS_ST.copy()
+    var_list.extend(SUB_ST)
+    for var in var_list:
+        if var['name'] == name:
+            return var
 
 class tokenIterator:
     def __init__(self, input_file):
@@ -315,12 +322,12 @@ def compile(tokenizer):
         for child in child_list:
             if child != None:
                 root.append(child)
-        return ET.tostring(root, encoding='unicode', method='xml')
+        # return ET.tostring(root, encoding='unicode', method='xml')
+        return writeClass(root)
 
     def compileClassName():
         atr = {'category':'class', 'used':'False'}
         elem = compileToken(expected_type='identifier', attributes=atr)
-        CLASS_NAME = elem.text
         return elem
  
 
@@ -386,23 +393,8 @@ def compile(tokenizer):
             return []
 
     def compileVarName(atr={}, allow_to_fail=False, store=False):
-        global CUR_ID
-        CUR_ID['name'] = ''
-        CUR_ID['index'] = ''
         elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
-        if store:
-            # index = len(list(filter(lambda x: x['category']==CUR_ID['category'], CLASS_ST)))
-            index = CLASS_INDEX[CUR_ID['category']]
-            CUR_ID['name'] = elem.text
-            CUR_ID['index'] = str(index)
-            CLASS_INDEX[CUR_ID['category']] += 1
-            elem.attrib = CUR_ID.copy()
-            CLASS_ST.append(CUR_ID.copy())
-            print(CUR_ID)
-            
-            return elem
-        else:
-            return elem
+        return elem
 
 
     def compileType():
@@ -412,11 +404,61 @@ def compile(tokenizer):
             (compileToken, ['keyword','boolean']),
             (compileVarName, [])
         ], 'type')
+
+    def writeClass(elem):
+        global CLASS_ST, CLASS_NAME
+        class_name = elem.find('identifier')
+        class_vars = elem.findall('classVarDec')
+        for var in class_vars:
+            category = var.find('keyword')
+            var_type = var[1]
+            index = len(list(filter(lambda x: x['category']==category.text, CLASS_ST)))
+            for ident in var[2:]:
+                if ident.tag == 'identifier':
+                    CLASS_ST.append({'category': category.text, 'name': ident.text, 'type': var_type.text, 'index': index})
+                    index += 1
+        CLASS_NAME = class_name.text
+        print(CLASS_ST)
+        return writeFunctions(elem)
+
+    def writeFunctions(elem):
+        functions = elem.findall('subroutineDec')
+        if functions != None:
+            result = ''.join([writeFunction(x) for x in functions])
+        return result
+
+    def writeFunction(elem):
+        global CLASS_NAME, SUB_INDEX, SUB_ST
+        SUB_ST = []
+        SUB_INDEX = {'argument': 0,
+             'local':    0,
+             'name': '',
+             'label': 0}
+        fun_type = elem.find('keyword')
+        if fun_type.text == 'method':
+            SUB_ST.append({'category': 'argument', 'type': CLASS_NAME, 'name': 'this', 'index': 0})
+        fun_name = elem.find('identifier')
+        params = zip(elem.find('parameterList')[0::3], elem.find('parameterList')[1::3])
+        for param_type, param_name in params:
+            index = len(list(filter(lambda x: x['category']=='argument', SUB_ST)))
+            SUB_ST.append({'category': 'argument', 'type': param_type.text, 'name': param_name.text, 'index': index})
+        sub_vars = elem.findall('./subroutineBody/varDec')
+        for item in sub_vars:
+            var_type = item[1]
+            var_names = item[2::2]
+            for var_name in var_names:
+                index = len(list(filter(lambda x: x['category']=='local', SUB_ST)))
+                SUB_ST.append({'category': 'local', 'type': var_type.text, 'name': var_name.text, 'index': index})
+        print(SUB_ST)
+        locals_count = len(list(filter(lambda x: x['category']=='local', SUB_ST)))
+        result = 'function {}.{} {}\n'.format(CLASS_NAME, fun_name.text, locals_count)
+        statements = elem.find('subroutineBody').find('statements')
+        result += writeStatements(statements)
+        return result
         
+
+
     def compileSubroutineDec():
-        global SUB_INDEX, SUB_ST
-        SUB_ST = [{'category': 'argument', 'type': CLASS_NAME, 'name': 'this', 'index': '0'}]
-        SUB_INDEX = {'argument': 1, 'local': 0, 'name': '', 'label': 0}
         def compileSubDecKwd():
             return compileOrAlt([
                 (compileToken, ['keyword','constructor']),
@@ -434,22 +476,8 @@ def compile(tokenizer):
             ])
 
         def compileParamName(atr={}, allow_to_fail=False, store=False):
-            global CUR_ID
-            CUR_ID['name'] = ''
-            CUR_ID['index'] = ''
             elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
-            if store:
-                index = SUB_INDEX[CUR_ID['category']]
-                CUR_ID['name'] = elem.text
-                CUR_ID['index'] = str(index)
-                SUB_INDEX[CUR_ID['category']] += 1
-                elem.attrib = CUR_ID.copy()
-                SUB_ST.append(CUR_ID.copy())
-                print(CUR_ID)
-                
-                return elem
-            else:
-                return elem
+            return elem
 
         def compileParamList():
             global CUR_ID
@@ -485,11 +513,8 @@ def compile(tokenizer):
                 return root
         
         def compileSubName():
-            result = ET.Element('function')
             elem = compileToken('identifier', None)
-            SUB_INDEX['name'] = elem.text
-            result.text = elem.text + str(SUB_INDEX['local'])
-            return result
+            return elem
 
         def formSubGr():
             return compileGroup([
@@ -513,8 +538,6 @@ def compile(tokenizer):
 
     def compileSubBody():
         def compileVarDec():
-            global CUR_ID
-            CUR_ID['category'] = 'local'
             def compileVarNameGr():
                 def formGroup1():
                     return compileGroup([
@@ -534,22 +557,8 @@ def compile(tokenizer):
                 ])
 
             def compileLocalVarName(atr={}, allow_to_fail=False, store=False):
-                global CUR_ID
-                CUR_ID['name'] = ''
-                CUR_ID['index'] = ''
                 elem = compileToken('identifier', None, allow_to_fail=allow_to_fail)
-                if store:
-                    index = SUB_INDEX[CUR_ID['category']]
-                    CUR_ID['name'] = elem.text
-                    CUR_ID['index'] = str(index)
-                    SUB_INDEX[CUR_ID['category']] += 1
-                    elem.attrib = CUR_ID.copy()
-                    SUB_ST.append(CUR_ID.copy())
-                    print(CUR_ID)
-                    
-                    return elem
-                else:
-                    return elem
+                return elem
 
             def compileVarDecLine():
                 child_list = formGroup()
@@ -569,107 +578,11 @@ def compile(tokenizer):
             return compileGroup([
                     (compileToken, ['symbol', '{']),
                     (compileVarDec, []),
-                    (writeS, [compileStatements]),
+                    (compileStatements, []),
                     (compileToken, ['symbol', '}'])
                 ])
 
-        def writeS(fn):
-            statements = fn()
-            return writeStatements(statements)
-
-        def writeStatements(statements):
-            result = ET.Element('code')
-            if statements != None:
-                # ET.dump(statements)
-                result.text = '\r\n'.join([writeSt(x).text for x in statements])
-            return result
-
-        def genLabel(name='', count=0):
-            global SUB_INDEX
-            elem = ET.Element('label')
-            elem.text = '{}{}'.format(name, SUB_INDEX['label'])
-            SUB_INDEX['label'] += 1
-            return elem.text
-
-        def writeSt(elem):
-            code = ET.Element('code')
-            result = []
-            if elem.tag == 'letStatement':
-                # ET.dump(elem)
-                result.append(writeExpr(elem.find('expression')))
-                let_ident = elem.find('identifier')
-
-                if let_ident.get('category') == 'field' or let_ident.get('category') == 'static':
-                    var_segment = 'this'
-                else:
-                    var_segment = let_ident.get('category')
-                let_ident_code = 'pop {} {}'.format(var_segment, let_ident.get('index'))
-                result.append(let_ident_code)
-                # ET.dump(result)
-                code.text = '\r\n'.join(result)
-                return code
-            elif elem.tag == 'doStatement':
-                result.append(writeSubCall(elem))
-                code.text = '\r\n'.join(result)
-                return code
-            elif elem.tag == 'returnStatement':
-                expr = elem.find('expression')
-                if expr != None:
-                    result.append('push expr')
-                    result.append(writeExpr(expr))
-                else:
-                    result.append('push constant 0')
-                result.append('return')
-                # ET.dump(result)
-                code.text = '\r\n'.join(result)
-                return code
-            elif elem.tag == 'ifStatement':
-                # ET.dump(elem)
-                expr = elem.find('expression')
-                statements = elem.findall('statements')
-                if len(statements) == 1:
-                    pos = statements[0]
-                    neg = []
-                    label1 = genLabel('IF_TRUE')
-                elif len(statements) == 2:
-                    pos = statements[0]
-                    neg = statements[1]
-                    label1 = genLabel('IF_TRUE')
-                    label2 = genLabel('IF_FALSE')
-                result.append(writeExpr(expr))
-                result.append('neg')
-                result.append('if-goto')
-                result.append(label1)
-                result.append(writeStatements(pos).text)
-                if neg != []:
-                    result.append('goto')
-                    result.append(label2)
-                    result.append(label1)
-                    result.append(writeStatements(neg).text)
-                    result.append(label2)
-                else:
-                    result.append(label1)
-                code.text = '\r\n'.join(result)
-                return code
-            elif elem.tag == 'whileStatement':
-                expr = elem.find('expression')
-                statements = elem.find('statements')
-                label1 = genLabel('WHILE_EXP')
-                label2 = genLabel('WHILE_END')
-                result.append(label1)
-                result.append(writeExpr(expr))
-                result.append('neg')
-                result.append('if-goto')
-                result.append(label2)
-                result.append(writeStatements(statements).text)
-                result.append('goto')
-                result.append(label1)
-                result.append(label2)
-                code.text = '\r\n'.join(result)
-                return code
-            else:
-                return elem
-
+        
 
         child_list = formBodyGr()
         root = ET.Element('subroutineBody')
@@ -680,6 +593,78 @@ def compile(tokenizer):
         else:
             root.text = '\r\n'
             return root
+
+    def writeS(fn):
+        statements = fn()
+        return writeStatements(statements)
+
+    def writeStatements(statements):
+        if statements != None:
+            # ET.dump(statements)
+            result = ''.join([writeSt(x) for x in statements])
+        return result
+
+    def genLabel(name=''):
+        global SUB_INDEX
+        try:
+            count = SUB_INDEX[name]
+        except KeyError:
+            count = 0
+            SUB_INDEX[name] = count
+        label = '{}{}'.format(name, count)
+        SUB_INDEX[name] += 1
+        return label
+
+    def writeSt(elem):
+        if elem.tag == 'letStatement':
+            # ET.dump(elem)
+            let_expression = writeExpr(elem.find('expression'))
+            let_ident = findVar(elem.find('identifier').text)
+            if let_ident['category'] == 'field' or let_ident['category'] == 'static':
+                var_segment = 'this'
+            else:
+                var_segment = let_ident['category']
+            return '{}pop {} {}\n'.format(let_expression, var_segment, let_ident['index'])
+        elif elem.tag == 'doStatement':
+            return '{}pop temp 0\n'.format(writeSubCall(elem))
+        elif elem.tag == 'returnStatement':
+            expr = elem.find('expression')
+            if expr != None:
+                return '{}return\n'.format(writeExpr(expr))
+            else:
+               return('push constant 0\nreturn\n')
+        elif elem.tag == 'ifStatement':
+            # ET.dump(elem)
+            result = ''
+            expr = elem.find('expression')
+            statements = elem.findall('statements')
+            if len(statements) == 1:
+                pos = statements[0]
+                neg = []
+                lab_if_true = genLabel('IF_TRUE')
+                lab_if_false = genLabel('IF_FALSE')
+            elif len(statements) == 2:
+                pos = statements[0]
+                neg = statements[1]
+                lab_if_true = genLabel('IF_TRUE')
+                lab_if_end = genLabel('IF_END')
+                lab_if_false = genLabel('IF_FALSE')
+            result = '{}if-goto {}\ngoto {}\n'.format(writeExpr(expr), lab_if_true, lab_if_false)
+            if neg != []:
+                result += 'label {}\n{}goto {}\nlabel {}\n{}label {}\n'.format(lab_if_true, writeStatements(pos),lab_if_end, lab_if_false, writeStatements(neg), lab_if_end)
+            else:
+                result += 'label {}\n{}label {}'.format(lab_if_true, writeStatements(pos), lab_if_false)
+            return result
+        elif elem.tag == 'whileStatement':
+            result = ''
+            expr = elem.find('expression')
+            statements = elem.find('statements')
+            label1 = genLabel('WHILE_EXP')
+            label2 = genLabel('WHILE_END')
+            result = 'label {}\n{}not\nif-goto {}\n{}goto {}\nlabel {}\n'.format(label1, writeExpr(expr), label2, writeStatements(statements), label1, label2)
+            return result
+        else:
+            return elem
 
 
     def compileStatements():
@@ -711,13 +696,14 @@ def compile(tokenizer):
             
             def compileLetVarName():
                 elem = compileToken('identifier', None)
-                var = varDefined(elem.text)
-                if var != None:
-                    elem.attrib = var
-                    elem.attrib['used'] = 'True'
-                    return elem
-                else:
-                    raise SyntaxError('{} variable is not defined'.format(elem.text))
+                return elem
+                # var = varDefined(elem.text)
+                # if var != None:
+                #     elem.attrib = var
+                #     elem.attrib['used'] = 'True'
+                #     return elem
+                # else:
+                #     raise SyntaxError('{} variable is not defined'.format(elem.text))
 
 
             def formGroup2():
@@ -865,16 +851,6 @@ def compile(tokenizer):
             root.text = '\r\n'
             return root
 
-    def writeLine(line):
-        global CODE
-        CODE = CODE + line + '\r\n'
-
-    def writeE(fn):
-        expr = fn()
-        result = ET.Element('code')
-        result.text = writeExpr(expr)
-        return result
-            
 
     def writeExpr(elem):
 
@@ -884,54 +860,46 @@ def compile(tokenizer):
 
         def writeTermList(elem):
             if len(elem) > 1:
-                result = '\r\n'.join([writeTerm(elem[0]),
+                result = '{}{}{}\n'.format(writeTerm(elem[0]),
                                 writeTermList(elem[2:]),
-                                writeOp(elem[1], OPS)])
+                                writeOp(elem[1], OPS))
             else:
-                result = '\r\n'.join([writeTerm(elem[0])])
+                result = '{}'.format(writeTerm(elem[0]))
             return result
 
         def writeTerm(elem):
             # result = ET.Element('code')
             if len(elem) == 1:
                 if elem[0].tag == 'integerConstant':
-                    result = 'push constant {}'.format(elem[0].text)
-                   
+                    result = 'push constant {}\n'.format(elem[0].text)
                 elif elem[0].tag == 'identifier':
-                    if elem[0].get('category') == 'field' or elem[0].get('category') == 'static':
+                    var = findVar(elem[0].text)
+                    if var['category'] == 'field' or var['category'] == 'static':
                         var_segment = 'this'
                     else:
-                        var_segment = elem[0].get('category')
-                    result = 'push {} {}'.format(var_segment, elem[0].get('index'))
+                        var_segment = var['category']
+                    result = 'push {} {}\n'.format(var_segment, var['index'])
                    
                 elif elem[0].tag == 'keyword':
-                    mapping = {'null': 'constant 0', 'true': 'constant -1', 'false': 'constant 0', 'this': '???'}
-                    result = 'push {}'.format(mapping[elem[0].text])
+                    mapping = {'null': 'constant 0', 'true': 'constant 0\nnot', 'false': 'constant 0', 'this': '???'}
+                    result = 'push {}\n'.format(mapping[elem[0].text])
                 return result
             elif len(elem) == 2:
-                result = '\r\n'.join([writeTerm(elem[1]),
-                               writeOp(elem[0], UNOPS)])
-                return result
+                return '{}{}\n'.format(writeTerm(elem[1]), writeOp(elem[0], UNOPS))
             elif len(elem) == 3:
-                result = '\r\n'.join([writeExpr(elem[1])])
-                return result
+                return writeExpr(elem[1])
             elif len(elem) == 4:
                 if elem.find('expressionList') != None:
-                    result = writeSubCall(elem)
+                    return writeSubCall(elem)
                 else:
-                    result = 'array case'
-                return result
+                    return 'array case'
             elif len(elem) == 6:
-                result = writeSubCall(elem)
-                return result
+                return writeSubCall(elem)
         
         # ET.dump(elem)
-        result = ET.Element('code')
         if len(elem) == 1:
-            # result.text=writeTerm(elem[0])
             return writeTerm(elem[0])
         else:
-            # result.text = writeTermList(elem)
             return writeTermList(elem)
 
 
@@ -1088,24 +1056,12 @@ def compile(tokenizer):
         
     
     def writeSubCall(elem_list):
-        res = ET.Element('code')
-        idents = []
-        exprs = []
         idents = elem_list.findall('identifier')
         expr_list = elem_list.find('expressionList')
         exprs = expr_list.findall('expression')
-        # for item in elem_list:
-        #     if item.tag == 'identifier':
-        #         idents.append(item.text)
-        #     elif item.tag == 'expressionList':
-        #         exprs.extend(item)
-        
         if exprs != []:
-            result = '\r\n'.join([writeExpr(x) for x in exprs])
-        # call = ET.Element('code')
-        call = 'call {}\r\n'.format('.'.join([item.text for item in idents]))
-        result += call
-        res.text = result
+            result = ''.join([writeExpr(x) for x in exprs])
+        result  += 'call {} {}\n'.format('.'.join([item.text for item in idents]), len(exprs))
         return result
 
 
@@ -1139,7 +1095,7 @@ def compile(tokenizer):
     return compileClass()
 
 def writeFile(data, filename):
-    f = open('{name}.xml'.format(name=filename), 'w')
+    f = open('{name}.vm'.format(name=filename), 'w')
     f.write(data)
     f.close()
 
