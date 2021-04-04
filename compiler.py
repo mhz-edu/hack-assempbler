@@ -69,7 +69,6 @@ SUB_INDEX = {'argument': 0,
              'local':    0,
              'name': '',
              'label': 0}
-CUR_ID = {}
 
 CLASS_NAME =''
 
@@ -129,7 +128,6 @@ class tokenIterator:
     def __next__(self):
         self.token=''
         char = self.input_file.read(1).decode('utf-8')
-        # print(self.input_file.tell(), ord(char), char)
         if char in SYMBOLS:
             if char == '/':
                 next_char = self.input_file.read(1).decode('utf-8')
@@ -145,7 +143,6 @@ class tokenIterator:
                             blockcomment_end2 = self.input_file.read(1).decode('utf-8')
                     return next(self)
                 else:
-                    # print("not a comment")
                     self.input_file.seek(self.input_file.tell() - 1, 0)   # move read cursor one char back
                     self.token = parseToken(char)
                     self.processed = False
@@ -169,8 +166,6 @@ class tokenIterator:
             while ((char != '') and not(char in TOKEN_SEPARATOR)):
                 self.token += char
                 char = self.input_file.read(1).decode('utf-8')
-            # print('current char ', char)
-            # print('current pos ', self.input_file.tell())
             self.input_file.seek(self.input_file.tell() - 1, 0)
             self.token = parseToken(self.token)
             self.processed = False
@@ -238,34 +233,6 @@ def compile(tokenizer):
                 else:
                     raise ValueError('Expeting {}, got {}'.format(expected_text, token_text))
     
-    def compileTokenAlt(expected_type, expected_text=None, code=str, allow_to_fail=False):
-        if tokenizer.getStatus():
-            token_type, token_text = next(tokenizer)
-            # print('Retrieved next token: ', token_type, token_text)
-        else:
-            token_type, token_text = tokenizer.getCurrentToken()
-            # print('Using existing token: ', token_type, token_text)
-        if (expected_text == None):
-            if (expected_type == token_type):
-                elem = createXmlElement((token_type, code(token_text)), {})
-                tokenizer.setProcessed()
-                return elem
-            else:
-                if allow_to_fail:
-                    return None
-                else:
-                    raise ValueError('Expeting type "{}", got type "{}"'.format(expected_type, token_type))    
-        else:
-            if (expected_text == token_text) and (expected_type == token_type):
-                elem = createXmlElement((token_type, code(token_text)),{})
-                tokenizer.setProcessed()
-                return elem
-            else:
-                if allow_to_fail:
-                    return None
-                else:
-                    raise ValueError('Expeting {}, got {}'.format(expected_text, token_text))
-
     def compileOrAlt(fns, store_in_st=''):
         for fn, arg in fns:
             elem = fn(*arg, allow_to_fail=True)
@@ -273,7 +240,6 @@ def compile(tokenizer):
                 if store_in_st == '':
                     return elem
                 else:
-                    CUR_ID[store_in_st] = elem.text
                     return elem
         raise ValueError('Unexpected token')
 
@@ -336,15 +302,9 @@ def compile(tokenizer):
 
     def compileClassVarDec():
         def compileClassVarField():
-            global CUR_ID
-            CUR_ID = {}
-            CUR_ID['category'] = 'field'
             return compileToken('keyword','field')
             
         def compileClassVarStatic():
-            global CUR_ID
-            CUR_ID = {}
-            CUR_ID['category'] = 'static'
             return compileToken('keyword','static')
 
         def compileVarNameGr(atr):
@@ -423,7 +383,6 @@ def compile(tokenizer):
                     index += 1
         CLASS_NAME = class_name.text
         COMP_CLASSES.append(CLASS_NAME)
-        print(CLASS_ST)
         return writeFunctions(elem)
 
     def writeFunctions(elem):
@@ -442,6 +401,8 @@ def compile(tokenizer):
         fun_type = elem.find('keyword')
         fun_ret_type = elem[1]
         fun_name = elem[2]
+        if fun_type.text == 'method':
+            SUB_ST.append({'category': 'argument', 'type': CLASS_NAME, 'name': 'this', 'index': 0})
         params = zip(elem.find('parameterList')[0::3], elem.find('parameterList')[1::3])
         for param_type, param_name in params:
             index = len(list(filter(lambda x: x['category']=='argument', SUB_ST)))
@@ -453,14 +414,12 @@ def compile(tokenizer):
             for var_name in var_names:
                 index = len(list(filter(lambda x: x['category']=='local', SUB_ST)))
                 SUB_ST.append({'category': 'local', 'type': var_type.text, 'name': var_name.text, 'index': index})
-        print(SUB_ST)
         locals_count = len(list(filter(lambda x: x['category']=='local', SUB_ST)))
         result = 'function {}.{} {}\n'.format(CLASS_NAME, fun_name.text, locals_count)
         if fun_type.text == 'constructor':
             field_count = len(list(filter(lambda x: x['category']=='field', CLASS_ST)))
             result += 'push constant {}\ncall Memory.alloc 1\npop pointer 0\n'.format(field_count)
         if fun_type.text == 'method':
-            SUB_ST.append({'category': 'argument', 'type': CLASS_NAME, 'name': 'this', 'index': 0})
             result += 'push argument 0\npop pointer 0\n'
         statements = elem.find('subroutineBody').find('statements')
         result += writeStatements(statements)
@@ -490,8 +449,6 @@ def compile(tokenizer):
             return elem
 
         def compileParamList():
-            global CUR_ID
-            CUR_ID['category'] = 'argument'
             def formGroup1():
                 return compileGroup([
                     (compileType, []),
@@ -610,7 +567,6 @@ def compile(tokenizer):
 
     def writeStatements(statements):
         if statements != None:
-            # ET.dump(statements)
             result = ''.join([writeSt(x) for x in statements])
         return result
 
@@ -627,26 +583,20 @@ def compile(tokenizer):
 
     def writeSt(elem):
         if elem.tag == 'letStatement':
-            # ET.dump(elem)
             let_check = elem[2]
             if let_check.text == '=':
                 let_expression = writeExpr(elem.find('expression'))
                 let_ident = findVar(elem[1].text, CLASS_ST, SUB_ST)
-                if let_ident['category'] == 'field' or let_ident['category'] == 'static':
+                if let_ident['category'] == 'field':
                     var_segment = 'this'
                 else:
                     var_segment = let_ident['category']
                 return '{}pop {} {}\n'.format(let_expression, var_segment, let_ident['index'])
             elif let_check.text == '[':
-                # dummy_expr = ET.Element('expression')
-                # dummy_term = ET.Element('term')
-                # dummy_term.extend(elem[1:5])
-                # dummy_expr.append(dummy_term)
-                # print(ET.dump(dummy_expr))
                 expr1 = writeExpr(elem[3])
                 expr2 = writeExpr(elem[6])
                 let_ident = findVar(elem[1].text, CLASS_ST, SUB_ST)
-                if let_ident['category'] == 'field' or let_ident['category'] == 'static':
+                if let_ident['category'] == 'field':
                     var_segment = 'this'
                 else:
                     var_segment = let_ident['category']
@@ -662,7 +612,6 @@ def compile(tokenizer):
             else:
                return('push constant 0\nreturn\n')
         elif elem.tag == 'ifStatement':
-            # ET.dump(elem)
             result = ''
             expr = elem.find('expression')
             statements = elem.findall('statements')
@@ -894,13 +843,12 @@ def compile(tokenizer):
         return result
 
     def writeTerm(elem):
-        # result = ET.Element('code')
         if len(elem) == 1:
             if elem[0].tag == 'integerConstant':
                 result = 'push constant {}\n'.format(elem[0].text)
             elif elem[0].tag == 'identifier':
                 var = findVar(elem[0].text, CLASS_ST, SUB_ST)
-                if var['category'] == 'field' or var['category'] == 'static':
+                if var['category'] == 'field':
                     var_segment = 'this'
                 else:
                     var_segment = var['category']
@@ -925,7 +873,7 @@ def compile(tokenizer):
                 return writeSubCall(elem)
             else:
                 arr =  findVar(elem.find('identifier').text, CLASS_ST, SUB_ST)
-                if arr['category'] == 'field' or arr['category'] == 'static':
+                if arr['category'] == 'field':
                     var_segment = 'this'
                 else:
                     var_segment = arr['category']
@@ -937,7 +885,6 @@ def compile(tokenizer):
             return writeSubCall(elem)
 
     def writeExpr(elem):   
-        # ET.dump(elem)
         if len(elem) == 1:
             return writeTerm(elem[0])
         else:
@@ -1100,7 +1047,6 @@ def compile(tokenizer):
         global COMP_CLASSES
         result = ''
         idents = elem_list.findall('identifier')
-        print('sub call with {} identifiers {}'.format(len(idents),[item.text for item in idents]))
         expr_list = elem_list.find('expressionList')
         exprs = expr_list.findall('expression')
         if exprs != []:
@@ -1108,13 +1054,13 @@ def compile(tokenizer):
         else:
             expr = ''
         if len(idents) == 1:
-            result += '{}push pointer 0\ncall {}.{} {}\n'.format(expr, CLASS_NAME, idents[0].text, len(exprs)+1)
+            result += 'push pointer 0\n{}call {}.{} {}\n'.format(expr, CLASS_NAME, idents[0].text, len(exprs)+1)
         else:
             var = findVar(idents[0].text, CLASS_ST, SUB_ST)
             if var == None and idents[0].text in COMP_CLASSES:
                 result += '{}call {} {}\n'.format(expr, '.'.join([i.text for i in idents]), len(exprs))
             elif var != None:
-                if var['category'] == 'field' or var['category'] == 'static':
+                if var['category'] == 'field':
                     var_segment = 'this'
                 else:
                     var_segment = var['category']
@@ -1170,8 +1116,6 @@ def parse(path):
     with open(p, mode='rb') as f:
         tokenizer = tokenIterator(f)
         parsed_data = compile(tokenizer)
-        # parsed_data = CODE
-    # print(parsed_data)
     writeFile(parsed_data, FILE['name'])
 
 def parsedir(path):
