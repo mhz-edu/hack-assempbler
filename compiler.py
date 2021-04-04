@@ -628,13 +628,31 @@ def compile(tokenizer):
     def writeSt(elem):
         if elem.tag == 'letStatement':
             # ET.dump(elem)
-            let_expression = writeExpr(elem.find('expression'))
-            let_ident = findVar(elem.find('identifier').text, CLASS_ST, SUB_ST)
-            if let_ident['category'] == 'field' or let_ident['category'] == 'static':
-                var_segment = 'this'
-            else:
-                var_segment = let_ident['category']
-            return '{}pop {} {}\n'.format(let_expression, var_segment, let_ident['index'])
+            let_check = elem[2]
+            if let_check.text == '=':
+                let_expression = writeExpr(elem.find('expression'))
+                let_ident = findVar(elem[1].text, CLASS_ST, SUB_ST)
+                if let_ident['category'] == 'field' or let_ident['category'] == 'static':
+                    var_segment = 'this'
+                else:
+                    var_segment = let_ident['category']
+                return '{}pop {} {}\n'.format(let_expression, var_segment, let_ident['index'])
+            elif let_check.text == '[':
+                # dummy_expr = ET.Element('expression')
+                # dummy_term = ET.Element('term')
+                # dummy_term.extend(elem[1:5])
+                # dummy_expr.append(dummy_term)
+                # print(ET.dump(dummy_expr))
+                expr1 = writeExpr(elem[3])
+                expr2 = writeExpr(elem[6])
+                let_ident = findVar(elem[1].text, CLASS_ST, SUB_ST)
+                if let_ident['category'] == 'field' or let_ident['category'] == 'static':
+                    var_segment = 'this'
+                else:
+                    var_segment = let_ident['category']
+                return 'push {} {}\n{}add\n{}pop temp 0\npop pointer 1\npush temp 0\npop that 0\n'.format(var_segment, let_ident['index'], expr1, expr2)
+
+            
         elif elem.tag == 'doStatement':
             return '{}pop temp 0\n'.format(writeSubCall(elem))
         elif elem.tag == 'returnStatement':
@@ -891,6 +909,12 @@ def compile(tokenizer):
             elif elem[0].tag == 'keyword':
                 mapping = {'null': 'constant 0', 'true': 'constant 0\nnot', 'false': 'constant 0', 'this': 'pointer 0'}
                 result = 'push {}\n'.format(mapping[elem[0].text])
+            elif elem[0].tag == 'stringConstant':
+                string_size = len(elem[0].text)
+                result = 'push constant {}\ncall String.new 1\n'.format(string_size)
+                for letter in elem[0].text:
+                    result += 'push constant {}\ncall String.appendChar 2\n'.format(ord(letter))
+                return result
             return result
         elif len(elem) == 2:
             return '{}{}\n'.format(writeTerm(elem[1]), writeOp(elem[0], UNOPS))
@@ -900,7 +924,15 @@ def compile(tokenizer):
             if elem.find('expressionList') != None:
                 return writeSubCall(elem)
             else:
-                return 'array case'
+                arr =  findVar(elem.find('identifier').text, CLASS_ST, SUB_ST)
+                if arr['category'] == 'field' or arr['category'] == 'static':
+                    var_segment = 'this'
+                else:
+                    var_segment = arr['category']
+                result = 'push {} {}\n'.format(var_segment, arr['index'])
+                expr = writeExpr(elem.find('expression'))
+                result += '{}add\npop pointer 1\npush that 0\n'.format(expr)
+                return result
         elif len(elem) == 6:
             return writeSubCall(elem)
 
